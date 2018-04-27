@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string>
+#include <vector>
 #include <sstream>
 #include <iostream>
 #include <fstream>
@@ -11,7 +12,7 @@
 
 using namespace std;
 
-#define UNDEFINED 0xFFFFFFFFFFFFFFFF //constant used for initialization
+#define UNDEFINED (long long) 0xFFFFFFFFFFFFFFFF //constant used for initialization
 
 typedef enum {WRITE_BACK, WRITE_THROUGH, WRITE_ALLOCATE, NO_WRITE_ALLOCATE} write_policy_t; 
 typedef enum {HIT, MISS} access_type_t;
@@ -31,12 +32,46 @@ class cache{
 	unsigned miss_penalty;
 	unsigned address_width;
 
+	unsigned num_sets;
+	
+
 	/* number of memory accesses processed */
 	unsigned number_memory_accesses;
 
 	/* trace file input stream */	
 	ifstream stream;
 
+	class Set{
+		unsigned line_size;
+		unsigned associativity;
+		write_policy_t wr_hit_policy;
+		write_policy_t wr_miss_policy;
+		unsigned hit_time;
+		unsigned miss_penalty;
+
+		struct Block{
+			long long tag;
+			bool dirty_bit;
+			bool valid;
+		};
+
+		vector<Block *> block_array;
+
+	public:
+		Set(unsigned associativity, unsigned line_size, write_policy_t wr_hit_policy,
+			write_policy_t wr_miss_policy, unsigned hit_time, unsigned miss_penalty);
+		~Set();
+
+		bool getBlockValid(unsigned pos);
+		bool getBlockDirty(unsigned pos);
+		long long getBlockTag(unsigned pos);
+
+		access_type_t write(unsigned search_tag);
+		access_type_t read(unsigned search_tag);
+
+	};
+
+	vector<Set *> set_array;
 
 public:
 
@@ -44,7 +79,7 @@ public:
 	* Instantiates the cache simulator 
         */
 	cache(unsigned cache_size, 		// cache size (in bytes)
-              unsigned cache_associativity,     // cache associativity (fully-associative caches not considered)
+          unsigned cache_associativity,     // cache associativity (fully-associative caches not considered)
 	      unsigned cache_line_size,         // cache block size (in bytes)
 	      write_policy_t write_hit_policy,  // write-back or write-through
 	      write_policy_t write_miss_policy, // write-allocate or no-write-allocate
