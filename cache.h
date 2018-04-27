@@ -35,8 +35,15 @@ class cache{
 	unsigned num_sets;
 	
 
-	/* number of memory accesses processed */
+	/* statistics */
 	unsigned number_memory_accesses;
+	unsigned reads;
+	unsigned read_misses;
+	unsigned writes;
+	unsigned write_misses;
+	unsigned evictions;
+	unsigned memory_writes;
+
 
 	/* trace file input stream */	
 	ifstream stream;
@@ -49,6 +56,9 @@ class cache{
 		unsigned hit_time;
 		unsigned miss_penalty;
 
+		unsigned * evictions;
+		unsigned * memory_writes;
+
 		struct Block{
 			long long tag;
 			bool dirty_bit;
@@ -56,10 +66,12 @@ class cache{
 		};
 
 		vector<Block *> block_array;
+		unsigned * precedent;
 
 	public:
 		Set(unsigned associativity, unsigned line_size, write_policy_t wr_hit_policy,
-			write_policy_t wr_miss_policy, unsigned hit_time, unsigned miss_penalty);
+			write_policy_t wr_miss_policy, unsigned hit_time, unsigned miss_penalty,
+			unsigned * evictions, unsigned * memory_writes);
 		~Set();
 
 		bool getBlockValid(unsigned pos);
@@ -69,6 +81,8 @@ class cache{
 		access_type_t write(unsigned search_tag);
 		access_type_t read(unsigned search_tag);
 
+		void updatePrecedent(unsigned pos);
+		unsigned getLRU();
 	};
 
 	vector<Set *> set_array;

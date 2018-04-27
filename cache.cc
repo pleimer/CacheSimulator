@@ -50,9 +50,17 @@ cache::cache(unsigned size,
 
 	num_sets = size / (line_size * associativity);
 
+	number_memory_accesses = 0;
+	reads = 0;
+	read_misses = 0;
+	writes = 0;
+	write_misses = 0;
+	evictions = 0;
+	memory_writes = 1; //there will be at least one because of final
+
 	//build cache
 	for (unsigned i = 0; i < num_sets; i++){
-		set_array.push_back(new Set(associativity, line_size, wr_hit_policy, wr_miss_policy, hit_time, miss_penalty));
+		set_array.push_back(new Set(associativity, line_size, wr_hit_policy, wr_miss_policy, hit_time, miss_penalty, &evictions, &memory_writes));
 	}
 }
 
@@ -103,9 +111,12 @@ void cache::run(unsigned num_entries){
 	*/
 	switch (*op){
 	case ('r') :
+		reads++;
+		if (read(address) == MISS) read_misses++;
 		break;
 	case ('w') :
-		write(address);
+		writes++;
+		if (write(address) == MISS) write_misses++;
 		break;
 	default: break;
 	}
@@ -117,13 +128,35 @@ void cache::run(unsigned num_entries){
 }
 
 void cache::print_statistics(){
-	cout << "STATISTICS" << endl;
-	/* edit here */
+	cout << "STATISTICS" << dec << endl;
+	cout << "memory accesses = " << number_memory_accesses << endl;
+	cout << "read = " << reads << endl;
+	cout << "read misses = " << read_misses << endl;
+	cout << "write = " << writes << endl;
+	cout << "write misses = " << write_misses << endl;
+	cout << "evictions = " << evictions << endl;
+	cout << "memory writes = " << memory_writes << endl;
+	cout << "average memory access time = " << ((float)hit_time + (((float)read_misses + (float)write_misses) / (float)number_memory_accesses)*(float)miss_penalty) << endl;
 }
 
 access_type_t cache::read(address_t address){
-	/* edit here */
-	return MISS;
+	unsigned block_offset_bit_size = ceil(log2(line_size));
+	unsigned index_bit_size = ceil(log2(num_sets));
+	long long tag = address >> (index_bit_size + block_offset_bit_size);
+
+	//create index mask
+	long long index_mask = 0;
+	for (unsigned i = 0; i < index_bit_size; i++){
+		index_mask <<= 1;
+		index_mask += 1;
+	}
+	for (unsigned i = 0; i < block_offset_bit_size; i++){
+		index_mask = index_mask << 1;
+	}
+	//get index
+	unsigned index = (address & index_mask) >> block_offset_bit_size;
+
+	return set_array[index]->read(tag);
 }
 
 access_type_t cache::write(address_t address){
@@ -163,7 +196,7 @@ void cache::print_tag_array(){
 			<< "tag" << endl;
 		for (unsigned j = 0; j < num_sets; j++){
 			if (set_array[j]->getBlockTag(i) != UNDEFINED)
-				cout << setfill(' ') << setw(7) << "index" << setw(6) << set_array[j]->getBlockDirty(i) << hex << setw(4 + tag_bits / 4)
+				cout << setfill(' ') << setw(7) << j << setw(6) << set_array[j]->getBlockDirty(i) << hex << setw(4 + tag_bits / 4)
 					<< "0x" <<  set_array[j]->getBlockTag(i) << endl;
 		}
 	}
@@ -178,7 +211,8 @@ unsigned cache::evict(unsigned index){
 
 
 cache::Set::Set(unsigned associativity, unsigned line_size, write_policy_t wr_hit_policy,
-	write_policy_t wr_miss_policy, unsigned hit_time, unsigned miss_penalty){
+	write_policy_t wr_miss_policy, unsigned hit_time, unsigned miss_penalty,
+	unsigned * evictions, unsigned * memory_writes){
 
 	this->line_size = line_size;
 	this->associativity = associativity;
@@ -186,6 +220,12 @@ cache::Set::Set(unsigned associativity, unsigned line_size, write_policy_t wr_hi
 	this->wr_miss_policy = wr_miss_policy;
 	this->hit_time = hit_time;
 	this->miss_penalty = miss_penalty;
+
+	this->evictions = evictions;
+	this->memory_writes = memory_writes;
+
+	precedent = new unsigned[associativity];
+	fill_n(precedent, associativity, (unsigned) UNDEFINED);
 
 	for (unsigned i = 0; i < associativity; i++){
 		block_array.push_back(new Block);
@@ -200,6 +240,7 @@ cache::Set::~Set(){
 		delete (*it);
 	}
 	block_array.clear();
+	delete[] precedent;
 }
 
 bool cache::Set::getBlockValid(unsigned pos){
@@ -224,23 +265,71 @@ access_type_t cache::Set::write(unsigned search_tag){
 	for (unsigned i = 0; i < associativity; i++){
 		if (search_tag == block_array[i]->tag){ //update 
 			block_array[i]->dirty_bit = true;
+			updatePrecedent(i);
 			return HIT;
 		}
 		else if (block_array[i]->tag == UNDEFINED){ //put in empty block
 			block_array[i]->tag = search_tag;
 			block_array[i]->dirty_bit = true;
+			updatePrecedent(i);
 			return MISS;
 		}
-		else { //evict
-			return MISS;
-		}
+	}
+
+	//evict
+	for (unsigned i = 0; i < associativity; i++) { //evict
+		unsigned LRU = getLRU();
+		block_array[LRU]->tag = search_tag;
+		block_array[LRU]->dirty_bit = true;
+		updatePrecedent(i);
+		(*memory_writes)++;
+		(*evictions)++;
+		return MISS;
 	}
 
 	return MISS;
 }
 
 access_type_t cache::Set::read(unsigned search_tag){
+	//for write-back, allocate
+	for (unsigned i = 0; i < associativity; i++){
+		if (search_tag == block_array[i]->tag){ //update 
+			updatePrecedent(i);
+			return HIT;
+		}
+		else if (block_array[i]->tag == UNDEFINED){ //put in empty block
+			block_array[i]->tag = search_tag;
+			block_array[i]->dirty_bit = false;
+			updatePrecedent(i);
+			return MISS;
+		}
+	}
 
+	//evict
+	for (unsigned i = 0; i < associativity; i++) { //evict
+		unsigned LRU = getLRU();
+		block_array[LRU]->tag = search_tag;
+		block_array[LRU]->dirty_bit = false;
+		updatePrecedent(i);
+		(*evictions)++;
+		return MISS;
+	}
 	return MISS;
+}
+
+void cache::Set::updatePrecedent(unsigned pos){
+	for (unsigned i = 0; i < associativity; i++){
+		if (precedent[i] != (unsigned)UNDEFINED) precedent[i]++;
+	}
+	precedent[pos] = 0;
+}
+
+unsigned cache::Set::getLRU(){
+	unsigned LRU = precedent[0];
+	for (unsigned i = 1; i < associativity; i++){
+		if (precedent[i] != (unsigned) UNDEFINED)
+			if (precedent[i] > LRU) LRU = precedent[i];
+	}
+	return LRU;
 }
 
