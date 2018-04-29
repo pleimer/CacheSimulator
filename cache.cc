@@ -56,7 +56,7 @@ cache::cache(unsigned size,
 	writes = 0;
 	write_misses = 0;
 	evictions = 0;
-	memory_writes = 1; //there will be at least one because of final
+	memory_writes = 0; //there will be at least one because of final
 
 	//build cache
 	for (unsigned i = 0; i < num_sets; i++){
@@ -101,8 +101,7 @@ void cache::run(unsigned num_entries){
         // tokenize the instruction
         char *op = strtok (str," ");
 	char *addr = strtok (NULL, " ");
-	address_t address = strtoul(addr, NULL, 16);
-
+	address_t address = strtoull(addr, NULL, 16);
 	/* 
 		edit here:
 		insert the code to process read and write operations
@@ -180,13 +179,33 @@ access_type_t cache::write(address_t address){
 	//get index
 	unsigned index = (address & index_mask) >> block_offset_bit_size;
 
-	return set_array[index]->write(tag);
+
+	switch (wr_hit_policy){
+	case WRITE_BACK:
+		switch (wr_miss_policy){
+		case WRITE_ALLOCATE: return set_array[index]->write_B_A(tag);
+		case NO_WRITE_ALLOCATE: return set_array[index]->write_B_NA(tag);
+		default: break;
+		}
+		break;
+	case WRITE_THROUGH:
+		switch (wr_miss_policy){
+		case WRITE_ALLOCATE: return set_array[index]->write_T_A(tag);
+		case NO_WRITE_ALLOCATE: return set_array[index]->write_T_NA(tag);
+		default: break;
+		}
+		break;
+	default: return MISS;
+	}
+	
+	return MISS;
 }
 
 void cache::print_tag_array(){
 	unsigned block_offset_bit_size = ceil(log2(line_size));
 	unsigned index_bit_size = ceil(log2(num_sets));
 	unsigned tag_bits = address_width - index_bit_size - block_offset_bit_size;
+	tag_bits += tag_bits % 4;
 
 	cout << "TAG ARRAY" << endl;
 
@@ -196,8 +215,8 @@ void cache::print_tag_array(){
 			<< "tag" << endl;
 		for (unsigned j = 0; j < num_sets; j++){
 			if (set_array[j]->getBlockTag(i) != UNDEFINED)
-				cout << setfill(' ') << setw(7) << j << setw(6) << set_array[j]->getBlockDirty(i) << hex << setw(4 + tag_bits / 4)
-					<< "0x" <<  set_array[j]->getBlockTag(i) << endl;
+				cout << setfill(' ') << setw(7) << dec << j << setw(6) << set_array[j]->getBlockDirty(i) << dec << setw(4 + tag_bits / 4)
+				<< "0x" << hex << set_array[j]->getBlockTag(i) << endl;
 		}
 	}
 }
@@ -255,7 +274,50 @@ long long cache::Set::getBlockTag(unsigned pos){
 	return block_array[pos]->tag;
 }
 
-access_type_t cache::Set::write(unsigned search_tag){
+
+access_type_t cache::Set::read(unsigned search_tag){
+	//for write-back, allocate
+	for (unsigned i = 0; i < associativity; i++){
+		if (search_tag == block_array[i]->tag){ //update 
+			updatePrecedent(i);
+			return HIT;
+		}
+		else if (block_array[i]->tag == UNDEFINED){ //put in empty block
+			block_array[i]->tag = search_tag;
+			block_array[i]->dirty_bit = false;
+			updatePrecedent(i);
+			return MISS;
+		}
+	}
+
+	//evict
+	unsigned LRU = getLRU();
+	block_array[LRU]->tag = search_tag;
+	block_array[LRU]->dirty_bit = false;
+	updatePrecedent(LRU);
+	(*evictions)++;
+	return MISS;
+}
+
+void cache::Set::updatePrecedent(unsigned pos){
+	for (unsigned i = 0; i < associativity; i++){
+		if ((precedent[i] != (unsigned)UNDEFINED) && (precedent[i] < precedent[pos])) precedent[i]++;
+	}
+	precedent[pos] = 0;
+}
+
+unsigned cache::Set::getLRU(){
+	unsigned LRU = precedent[0];
+	for (unsigned i = 1; i < associativity; i++){
+		if (precedent[i] != (unsigned) UNDEFINED)
+			if (precedent[i] > LRU) LRU = precedent[i];
+
+	}
+	return LRU;
+}
+
+
+access_type_t cache::Set::write_B_A(unsigned search_tag){
 	//for write back, allocate
 
 	//search for tag in block array
@@ -275,61 +337,74 @@ access_type_t cache::Set::write(unsigned search_tag){
 			return MISS;
 		}
 	}
-
 	//evict
-	for (unsigned i = 0; i < associativity; i++) { //evict
-		unsigned LRU = getLRU();
-		block_array[LRU]->tag = search_tag;
-		block_array[LRU]->dirty_bit = true;
-		updatePrecedent(i);
-		(*memory_writes)++;
-		(*evictions)++;
-		return MISS;
-	}
+	unsigned LRU = getLRU();
+	if (block_array[LRU]->dirty_bit)(*memory_writes)++;
 
+	block_array[LRU]->tag = search_tag;
+	block_array[LRU]->dirty_bit = true;
+	updatePrecedent(LRU);
+	(*memory_writes)++;
+	(*evictions)++;
 	return MISS;
 }
 
-access_type_t cache::Set::read(unsigned search_tag){
-	//for write-back, allocate
+
+access_type_t cache::Set::write_B_NA(unsigned search_tag){
+	//write back, no allocate
+	for (unsigned i = 0; i < associativity; i++){
+		if (search_tag == block_array[i]->tag){ //update 
+			block_array[i]->dirty_bit = true;
+			updatePrecedent(i);
+			return HIT;
+		}
+	}
+
+	//miss
+	(*memory_writes)++;
+	return MISS;
+}
+
+access_type_t cache::Set::write_T_A(unsigned search_tag){
+	//write through
 	for (unsigned i = 0; i < associativity; i++){
 		if (search_tag == block_array[i]->tag){ //update 
 			updatePrecedent(i);
+			(*memory_writes)++;
 			return HIT;
 		}
 		else if (block_array[i]->tag == UNDEFINED){ //put in empty block
 			block_array[i]->tag = search_tag;
-			block_array[i]->dirty_bit = false;
+			block_array[i]->dirty_bit = true;
 			updatePrecedent(i);
 			return MISS;
 		}
 	}
 
 	//evict
-	for (unsigned i = 0; i < associativity; i++) { //evict
-		unsigned LRU = getLRU();
-		block_array[LRU]->tag = search_tag;
-		block_array[LRU]->dirty_bit = false;
-		updatePrecedent(i);
-		(*evictions)++;
-		return MISS;
-	}
+	unsigned LRU = getLRU();
+	if (block_array[LRU]->dirty_bit)(*memory_writes)++;
+
+	block_array[LRU]->tag = search_tag;
+	block_array[LRU]->dirty_bit = true;
+	updatePrecedent(LRU);
+	(*evictions)++;
 	return MISS;
 }
 
-void cache::Set::updatePrecedent(unsigned pos){
+access_type_t cache::Set::write_T_NA(unsigned search_tag){
+	//for write through, no allocate
+
 	for (unsigned i = 0; i < associativity; i++){
-		if (precedent[i] != (unsigned)UNDEFINED) precedent[i]++;
+		if (search_tag == block_array[i]->tag){ //update 
+			updatePrecedent(i);
+			(*memory_writes)++;
+			return HIT;
+		}
 	}
-	precedent[pos] = 0;
-}
 
-unsigned cache::Set::getLRU(){
-	unsigned LRU = precedent[0];
-	for (unsigned i = 1; i < associativity; i++){
-		if (precedent[i] != (unsigned) UNDEFINED)
-			if (precedent[i] > LRU) LRU = precedent[i];
-	}
-	return LRU;
-}
 
+	//miss
+	(*memory_writes)++;
+	return MISS;
+}
