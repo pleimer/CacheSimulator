@@ -205,18 +205,32 @@ void cache::print_tag_array(){
 	unsigned block_offset_bit_size = ceil(log2(line_size));
 	unsigned index_bit_size = ceil(log2(num_sets));
 	unsigned tag_bits = address_width - index_bit_size - block_offset_bit_size;
-	tag_bits += tag_bits % 4;
+	//tag_bits += tag_bits % 4;
 
 	cout << "TAG ARRAY" << endl;
 
 	for (unsigned i = 0; i < associativity; i++){
 		cout << "BLOCKS " << i << endl;
-		cout << setfill(' ') << setw(7) << "index" << setw(6) << "dirty" << setw(4 + tag_bits / 4)
-			<< "tag" << endl;
+		if (wr_hit_policy == WRITE_BACK){
+			cout << setfill(' ') << setw(7) << "index" << setw(6) << "dirty" << setw(4 + tag_bits / 4)
+				<< "tag" << endl;
+		}
+		else{
+			cout << setfill(' ') << setw(7) << "index" << setw(4 + tag_bits / 4)
+				<< "tag" << endl;
+		}
+
 		for (unsigned j = 0; j < num_sets; j++){
-			if (set_array[j]->getBlockTag(i) != UNDEFINED)
-				cout << setfill(' ') << setw(7) << dec << j << setw(6) << set_array[j]->getBlockDirty(i) << dec << setw(4 + tag_bits / 4)
-				<< "0x" << hex << set_array[j]->getBlockTag(i) << endl;
+			if (set_array[j]->getBlockTag(i) != UNDEFINED){
+				if (wr_hit_policy == WRITE_BACK){
+					cout << setfill(' ') << setw(7) << dec << j << setw(6) << set_array[j]->getBlockDirty(i) << setw(4) << "0x" << setw(tag_bits / 4)
+						 << hex << set_array[j]->getBlockTag(i) << endl;
+				}
+				else {
+					cout << setfill(' ') << setw(7) << dec << j << setw(4) << "0x" << setw(tag_bits / 4)
+						 << hex << set_array[j]->getBlockTag(i) << endl;
+				}
+			}
 		}
 	}
 }
@@ -292,6 +306,7 @@ access_type_t cache::Set::read(unsigned search_tag){
 
 	//evict
 	unsigned LRU = getLRU();
+	if (block_array[LRU]->dirty_bit) (*memory_writes)++;
 	block_array[LRU]->tag = search_tag;
 	block_array[LRU]->dirty_bit = false;
 	updatePrecedent(LRU);
@@ -307,13 +322,16 @@ void cache::Set::updatePrecedent(unsigned pos){
 }
 
 unsigned cache::Set::getLRU(){
-	unsigned LRU = precedent[0];
+	unsigned pos = 0;
+	unsigned highest_val = precedent[0];
 	for (unsigned i = 1; i < associativity; i++){
 		if (precedent[i] != (unsigned) UNDEFINED)
-			if (precedent[i] > LRU) LRU = precedent[i];
-
+			if (precedent[i] > highest_val){
+				highest_val = precedent[i];
+				pos = i;
+			}
 	}
-	return LRU;
+	return pos;
 }
 
 
@@ -339,12 +357,10 @@ access_type_t cache::Set::write_B_A(unsigned search_tag){
 	}
 	//evict
 	unsigned LRU = getLRU();
-	if (block_array[LRU]->dirty_bit)(*memory_writes)++;
-
+	if (block_array[LRU]->dirty_bit) (*memory_writes)++;
 	block_array[LRU]->tag = search_tag;
 	block_array[LRU]->dirty_bit = true;
 	updatePrecedent(LRU);
-	(*memory_writes)++;
 	(*evictions)++;
 	return MISS;
 }
@@ -361,7 +377,6 @@ access_type_t cache::Set::write_B_NA(unsigned search_tag){
 	}
 
 	//miss
-	(*memory_writes)++;
 	return MISS;
 }
 
@@ -383,7 +398,7 @@ access_type_t cache::Set::write_T_A(unsigned search_tag){
 
 	//evict
 	unsigned LRU = getLRU();
-	if (block_array[LRU]->dirty_bit)(*memory_writes)++;
+	if (block_array[LRU]->dirty_bit) (*memory_writes)++;
 
 	block_array[LRU]->tag = search_tag;
 	block_array[LRU]->dirty_bit = true;
@@ -402,7 +417,6 @@ access_type_t cache::Set::write_T_NA(unsigned search_tag){
 			return HIT;
 		}
 	}
-
 
 	//miss
 	(*memory_writes)++;
