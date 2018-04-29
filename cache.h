@@ -78,11 +78,11 @@ class cache{
 		bool getBlockDirty(unsigned pos);
 		long long getBlockTag(unsigned pos);
 
-		access_type_t read(unsigned search_tag);
-		access_type_t write_B_NA(unsigned search_tag);
-		access_type_t write_B_A(unsigned search_tag);
-		access_type_t write_T_NA(unsigned search_tag);
-		access_type_t write_T_A(unsigned search_tag);
+		access_type_t read(long long search_tag);
+		access_type_t write_B_NA(long long search_tag);
+		access_type_t write_B_A(long long search_tag);
+		access_type_t write_T_NA(long long search_tag);
+		access_type_t write_T_A(long long search_tag);
 
 		void updatePrecedent(unsigned pos);
 		unsigned getLRU();

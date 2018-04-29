@@ -30,7 +30,7 @@ int main(int argc, char **argv){
 
 	mycache->print_configuration();
 
-	mycache->load_trace("traces/GCC.t");
+	mycache->load_trace("traces/MCF.t");
 
 	mycache->run();	
 

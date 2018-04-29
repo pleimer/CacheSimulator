@@ -136,6 +136,8 @@ void cache::print_statistics(){
 	cout << "evictions = " << evictions << endl;
 	cout << "memory writes = " << memory_writes << endl;
 	cout << "average memory access time = " << ((float)hit_time + (((float)read_misses + (float)write_misses) / (float)number_memory_accesses)*(float)miss_penalty) << endl;
+
+	//cout << "miss rate = " << (((float)read_misses + (float)write_misses)/(reads + writes)) * 100 << endl;
 }
 
 access_type_t cache::read(address_t address){
@@ -289,7 +291,7 @@ long long cache::Set::getBlockTag(unsigned pos){
 }
 
 
-access_type_t cache::Set::read(unsigned search_tag){
+access_type_t cache::Set::read(long long search_tag){
 	//for write-back, allocate
 	for (unsigned i = 0; i < associativity; i++){
 		if (search_tag == block_array[i]->tag){ //update 
@@ -335,7 +337,7 @@ unsigned cache::Set::getLRU(){
 }
 
 
-access_type_t cache::Set::write_B_A(unsigned search_tag){
+access_type_t cache::Set::write_B_A(long long search_tag){
 	//for write back, allocate
 
 	//search for tag in block array
@@ -366,7 +368,7 @@ access_type_t cache::Set::write_B_A(unsigned search_tag){
 }
 
 
-access_type_t cache::Set::write_B_NA(unsigned search_tag){
+access_type_t cache::Set::write_B_NA(long long search_tag){
 	//write back, no allocate
 	for (unsigned i = 0; i < associativity; i++){
 		if (search_tag == block_array[i]->tag){ //update 
@@ -380,7 +382,7 @@ access_type_t cache::Set::write_B_NA(unsigned search_tag){
 	return MISS;
 }
 
-access_type_t cache::Set::write_T_A(unsigned search_tag){
+access_type_t cache::Set::write_T_A(long long search_tag){
 	//write through
 	for (unsigned i = 0; i < associativity; i++){
 		if (search_tag == block_array[i]->tag){ //update 
@@ -407,7 +409,7 @@ access_type_t cache::Set::write_T_A(unsigned search_tag){
 	return MISS;
 }
 
-access_type_t cache::Set::write_T_NA(unsigned search_tag){
+access_type_t cache::Set::write_T_NA(long long search_tag){
 	//for write through, no allocate
 
 	for (unsigned i = 0; i < associativity; i++){
